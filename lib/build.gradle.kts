@@ -33,6 +33,7 @@ dependencies {
     implementation("com.google.guava:guava:31.1-jre")
 
     implementation("org.jetbrains.kotlin:kotlin-reflect:1.8.20")
+    testImplementation("org.jetbrains.kotlin:kotlin-reflect:1.8.20")
 }
 
 tasks.named<Test>("test") {

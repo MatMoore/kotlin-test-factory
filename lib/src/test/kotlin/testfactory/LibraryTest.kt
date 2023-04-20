@@ -3,21 +3,36 @@
  */
 package testfactory
 
+import kotlin.reflect.KClass
+import kotlin.reflect.KParameter
+import kotlin.reflect.full.isSupertypeOf
+import kotlin.reflect.typeOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 class LibraryTest {
     data class Foo(val bar: Int, val baz: String)
 
-    class Factory<T> {
-        fun build(): Foo {
-            return Foo(1, "")
+    class Factory<T : Any>(private val cls: KClass<T>) {
+        fun build(): T {
+            val constructor = cls.constructors.first()
+            val arglist = constructor.parameters.map { generateDefault(it) } // TODO provide default for named arguments
+
+            return constructor.call(*arglist.toTypedArray())
+        }
+
+        private fun generateDefault(kparameter: KParameter): Any {
+            val ktype = kparameter.type
+            return when {
+                ktype.isSupertypeOf(typeOf<Int>()) -> 0
+                ktype.isSupertypeOf(typeOf<String>()) -> ""
+                else -> throw Exception("Blarg")
+            }
         }
     }
 
     @Test fun canBuildDataClass() {
-        val foo = Factory<Foo>().build()
-        assertEquals(foo, Foo(1, ""))
+        val foo = Factory(Foo::class).build()
+        assertEquals(foo, Foo(0, ""))
     }
 }
