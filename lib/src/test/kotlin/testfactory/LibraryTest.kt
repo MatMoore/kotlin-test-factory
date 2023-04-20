@@ -3,24 +3,64 @@
  */
 package testfactory
 
+import org.junit.jupiter.api.assertThrows
 import kotlin.reflect.KClass
 import kotlin.reflect.KParameter
+import kotlin.reflect.full.declaredMemberProperties
 import kotlin.reflect.full.isSupertypeOf
+import kotlin.reflect.full.primaryConstructor
 import kotlin.reflect.typeOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
+/*
+Notes on Kotlin reflection API
+
+- KType may be nullable or not nullable
+- KClass represents a concrete class that has been declared somewhere
+- Every instance at runtime has a KClass
+- Function signatures have KTypes
+- A KType can be turned into a KClassifier which can be compared to other KClassifiers
+- A KClass is a KClassifier
+- There is no way to get the KType of an instance at runtime (because of type erasure?)
+ */
+
 class LibraryTest {
     data class Foo(val bar: Int, val baz: String)
 
-    class Factory<T : Any>(private val cls: KClass<T>) {
+    open class Factory<T : Any>(private val cls: KClass<T>) {
         fun build(): T {
-            val constructor = cls.constructors.first()
-            val arglist = constructor.parameters.map { generateDefault(it) } // TODO provide default for named arguments
+            val constructor = cls.primaryConstructor ?: throw Exception("No primary constructor!")
+            val arglist = constructor.parameters.map { generateParameter(it) ?: generateDefault(it) } // TODO provide default for named arguments
 
+            println(arglist)
             return constructor.call(*arglist.toTypedArray())
         }
 
+        private fun generateParameter(kparameter: KParameter): Any? {
+            val property = this::class.declaredMemberProperties.find { it.name == kparameter.name }
+            if(property == null) {
+                println("No property ${kparameter.name}")
+                return null
+            }
+            val value = property.getter.call(this)
+            val valueType = property.returnType
+            val type = kparameter.type
+            if(type.isMarkedNullable && value == null) {
+                return null
+            }
+            if(!type.isMarkedNullable && value == null) {
+                throw Exception("Factory defined a null value for a non-nullable field")
+            }
+            if(valueType != type) {
+                throw Exception("Factory defined ${valueType} for a field with type ${type}")
+            }
+
+            return value
+        }
+
+        // Maybe this behaviour is not worth having?
+        // Should users be forced to provide defaults for every field?
         private fun generateDefault(kparameter: KParameter): Any {
             val ktype = kparameter.type
             return when {
@@ -34,5 +74,36 @@ class LibraryTest {
     @Test fun canBuildDataClass() {
         val foo = Factory(Foo::class).build()
         assertEquals(foo, Foo(0, ""))
+    }
+
+    class FooFactory : Factory<Foo>(Foo::class) {
+        val bar = 123
+        val baz = "hello"
+
+        // TODO: declare getters instead of fixed values
+    }
+
+    /**
+     * The user can create their own factory class with default values for
+     * each of the fields.
+     */
+    @Test fun canSubclassFactories() {
+        val foo = FooFactory().build()
+        assertEquals(foo, Foo(123, "hello"))
+    }
+
+    class FooFactoryWithNulls: Factory<Foo>(Foo::class) {
+        val bar = null
+    }
+    @Test fun cannotProvideNullToNonNullableFields() {
+        assertThrows<Exception> { FooFactoryWithNulls().build() }
+    }
+
+    class FooFactoryWithWrongTypes: Factory<Foo>(Foo::class) {
+        val bar = "hello"
+        val baz = 123
+    }
+    @Test fun cannotProvideWrongTypes() {
+        assertThrows<Exception> { FooFactoryWithWrongTypes().build() }
     }
 }
