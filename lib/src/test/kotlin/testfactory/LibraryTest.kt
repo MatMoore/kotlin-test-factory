@@ -29,12 +29,24 @@ class LibraryTest {
     data class Foo(val bar: Int, val baz: String)
 
     open class Factory<T : Any>(private val cls: KClass<T>) {
-        fun build(): T {
+        fun build(vararg overrides: Pair<String, Any>): T {
             val constructor = cls.primaryConstructor ?: throw Exception("No primary constructor!")
-            val arglist = constructor.parameters.map { generateParameter(it) ?: generateDefault(it) } // TODO provide default for named arguments
+            val parameters = constructor.parameters
 
-            println(arglist)
-            return constructor.call(*arglist.toTypedArray())
+            val overridesMap = overrides.toMap()
+            val paramNames = parameters.map { it.name }.toSet()
+            val unknowns = overridesMap.keys.toSet() - paramNames
+            if(unknowns.isNotEmpty()) {
+                throw Exception("Unknown overrides $unknowns")
+            }
+
+            val arglist = parameters.map { overridesMap.get(it.name) ?: generateParameter(it) ?: generateDefault(it) }
+
+            try {
+                return constructor.call(*arglist.toTypedArray())
+            } catch(e: java.lang.IllegalArgumentException) {
+                throw Exception("Overrides passed to build() do not typecheck: $overrides", e)
+            }
         }
 
         private fun generateParameter(kparameter: KParameter): Any? {
@@ -76,8 +88,8 @@ class LibraryTest {
         assertEquals(foo, Foo(0, ""))
     }
 
-    class FooFactory : Factory<Foo>(Foo::class) {
-        val bar = 123
+    open class FooFactory : Factory<Foo>(Foo::class) {
+        open val bar = 123
         val baz = "hello"
 
         // TODO: declare getters instead of fixed values
@@ -105,5 +117,24 @@ class LibraryTest {
     }
     @Test fun cannotProvideWrongTypes() {
         assertThrows<Exception> { FooFactoryWithWrongTypes().build() }
+    }
+
+    @Test fun canOverrideParameters() {
+        val foo = Factory(Foo::class).build("bar" to 1)
+        assertEquals(foo, Foo(1, ""))
+    }
+
+    @Test fun cannotOverrideNonExistentParameters() {
+        assertThrows<Exception> {  Factory(Foo::class).build("abc" to 1) }
+    }
+
+    @Test fun cannotOverrideParametersWithWrongTypes() {
+        assertThrows<Exception> { Factory(Foo::class).build("bar" to "abc") }
+    }
+
+    @Test fun anonymousObjectAsOverride() {
+        val foo = object : FooFactory() { override val bar = 2 }.build()
+
+        assertEquals(foo, Foo(2, ""))
     }
 }
